@@ -1,0 +1,180 @@
+AFASA 2.0 — ANTIGRAVITY IMPORTANT TASK
+Date: 2026-01-26 (Asia/Kuala_Lumpur)
+Owner: Meerul (operator) + Antigravity (executor)
+Scope: Make AFASA robust (no silent stubs), restore routing (Traefik), and align versions with proven compatibility.
+
+================================================================================
+0) RULES FOR ANTIGRAVITY (NON-NEGOTIABLE)
+================================================================================
+1. NO blind “latest”. Pin versions. Upgrade only with proof (release notes / compatibility notes).
+2. Apply changes in this order: infra compatibility -> database schema -> service logic -> end-to-end verification.
+3. Every change must be reproducible:
+   - show `git diff` before commit
+   - run `docker compose up -d` + health checks
+   - keep a rollback path (git tag + Docker package pin).
+4. If a step fails, STOP and capture:
+   - command
+   - stdout/stderr
+   - `docker compose ps`
+   - `docker compose logs --tail=200 <service>`
+   - `docker version` + `docker info`
+   - `uname -a` + `lsb_release -a`
+
+================================================================================
+1) CURRENT INCIDENT: TRAEFIK FAILS TO DISCOVER DOCKER SERVICES
+================================================================================
+Symptom:
+- Traefik log: "client version 1.24 is too old. Minimum supported API version is 1.44/1.48+"
+- Result: routing breaks (404 from Traefik because it cannot read labels/services).
+
+Root cause (confirmed in the ecosystem since Docker 29):
+- Docker Engine v29 enforces a higher minimum API version; older Docker clients in some tools break.
+- Traefik versions (including v3.6.0 reported by users) were affected and could fail against Docker 29.
+
+BEST-PRACTICE FIX (two proven options; choose A first, fallback B):
+A) Prefer: Pin Traefik to a FIXED tag known to work with Docker 29 (>= 3.6.1) and validate.
+   - Do NOT use `traefik:latest`.
+B) Guaranteed fallback: Downgrade Docker Engine from 29.x to 28.5.2 and hold/pin packages.
+   - This rollback has widely confirmed success when Traefik fails after Docker 29.
+
+In your logs:
+- Docker Engine is 29.1.4 (API 1.52, min 1.44). Your Traefik is negotiating as 1.24 -> hard fail.
+
+================================================================================
+2) PROJECT CODE AUDIT SUMMARY (WHAT WAS BROKEN / STUBBED)
+================================================================================
+2.1 tb_adapter (UbiBot sync)
+- routes_extended.py: sync_ubibot() was a stub: it iterated channels and never wrote DB records.
+- Impact: UbiBot channels never appear in AFASA registry.
+
+2.2 tb_adapter (enable/disable device)
+- routes_extended.py: enable_device/disable_device returned success without state change or events.
+- Impact: "control" APIs are fake; portal can't reliably show or control devices.
+
+2.3 report service (async bottleneck)
+- report/app/routes.py generated report synchronously inside API call, uploads to S3, then returns.
+- report/app/subscriber.py was a stub that only prints.
+- Impact: large reports can timeout requests; not resilient.
+
+2.4 Device registry missing
+- Postgres schema had no `devices` table.
+- common/models.py had no Device model.
+- Impact: no canonical place to store IoT devices.
+
+================================================================================
+3) PATCH INCLUDED (ALREADY IMPLEMENTED IN THE PATCHED ZIP)
+================================================================================
+I prepared a patched project bundle with the following changes:
+
+A) Database schema
+- infra/postgres/init/001_schema_rls.sql
+  - ADD: devices table with unique constraint (tenant_id, provider, external_id)
+  - ADD: RLS enable + tenant isolation policy for devices
+
+B) Common library
+- services/common/models.py
+  - ADD: Device ORM model
+- services/common/__init__.py
+  - EXPORT: Device
+- services/common/events.py
+  - ADD subjects: DEVICE_SYNCED, DEVICE_COMMAND_REQUESTED, DEVICE_COMMAND_COMPLETED
+
+C) tb_adapter fixes
+- services/tb_adapter/app/routes_extended.py
+  - sync_ubibot is now `async def` and performs idempotent UPSERT into devices table
+  - enable_device/disable_device now:
+    - updates desired state in DB
+    - publishes DEVICE_COMMAND_REQUESTED event (async command pattern)
+    - writes audit log entry
+
+D) report async workflow
+- services/report/app/routes.py
+  - /generate now queues report (status=queued) and publishes REPORT_REQUESTED
+  - returns HTTP 202 (Accepted) with report_id/status
+- services/report/app/subscriber.py
+  - now generates report on REPORT_REQUESTED, uploads to MinIO, updates DB, publishes REPORT_READY
+  - includes idempotency (if already ready, skip)
+
+================================================================================
+4) WHAT YOU (ANTIGRAVITY) MUST DO NOW — EXECUTION PLAN
+================================================================================
+
+PHASE 0 — Safety / Rollback
+1) In repo root:
+   - git status
+   - git checkout -b fix/robust-audit-2026-01-26
+2) Tag current state before changes:
+   - git tag pre-audit-2026-01-26
+   - git push --tags (if remote configured)
+
+PHASE 1 — Fix Traefik/Docker compatibility (routing must come back first)
+1) Verify current versions:
+   - docker version
+   - docker compose version
+2) Update docker-compose.yml:
+   - pin Traefik (example target): traefik:v3.6.7 (NOT latest)
+   - remove DOCKER_API_VERSION hack (does not reliably fix the issue)
+   - ensure providers.docker.network matches the actual compose network name
+     (your services run on something like <project>_afasa_net)
+3) Restart only Traefik:
+   - docker compose up -d --force-recreate traefik
+   - docker compose logs --tail=200 traefik
+4) If the Docker API error persists:
+   - downgrade Docker Engine to 28.5.2 and pin packages (hold):
+     - apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+   - then repeat step (3).
+
+PHASE 2 — Apply DB + service patches
+Option A (recommended): use the provided patched zip as reference, then apply changes to your working repo.
+Option B: directly replace files to match the patched versions.
+
+Key note:
+- Postgres init SQL only runs on FIRST database creation (empty volume).
+  If you already have pgdata volume, you MUST apply schema changes manually:
+  - connect to Postgres and run the CREATE TABLE + RLS policy for devices.
+
+PHASE 3 — Rebuild and boot services
+1) docker compose pull
+2) docker compose up -d --build
+3) Health checks:
+   - curl -f http://<host>/readyz (per service)
+   - docker compose ps
+
+PHASE 4 — Functional verification (must pass)
+A) UbiBot sync creates devices
+- call /api/tb/integrations/ubibot/sync (or your route)
+- verify DB:
+  SELECT * FROM devices WHERE provider='ubibot' LIMIT 5;
+
+B) Enable/Disable updates desired state
+- call /api/tb/devices/<id>/disable
+- verify DB enabled=false
+
+C) Report generation is async
+- POST /api/report/generate => returns 202 and report_id
+- later GET /api/report/reports/<report_id> => should succeed after worker finishes
+
+================================================================================
+5) DELIVERABLES TO MEERUL
+================================================================================
+After execution, provide:
+1) A single summary:
+   - what changed (bullets)
+   - what was tested (commands)
+   - what passed/failed (with logs)
+2) git commit(s) with clear messages:
+   - feat(db): add devices registry + RLS
+   - feat(tb_adapter): implement ubibot sync + device state APIs
+   - feat(report): async generation via NATS worker
+   - chore(compose): pin traefik + fix network discovery
+3) If Traefik required Docker downgrade:
+   - exact package versions installed
+   - the apt pin/hold commands used
+
+================================================================================
+6) PATCH BUNDLE LOCATION
+================================================================================
+- Patched zip (reference): Afasa-main-patched.zip (provided alongside this file).
+- This task file is the authoritative runbook for antigravity.
+
+END.

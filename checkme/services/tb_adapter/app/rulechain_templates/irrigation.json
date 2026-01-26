@@ -1,0 +1,53 @@
+{
+    "name": "Irrigation Control",
+    "firstNodeIndex": 0,
+    "nodes": [
+        {
+            "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode",
+            "name": "Message Type Switch",
+            "configuration": {}
+        },
+        {
+            "type": "org.thingsboard.rule.engine.filter.TbJsSwitchNode",
+            "name": "Low Moisture Check",
+            "configuration": {
+                "jsScript": "return msg.soil_moisture < 28;"
+            }
+        },
+        {
+            "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
+            "name": "Create Low Moisture Alarm",
+            "configuration": {
+                "alarmType": "LOW_SOIL_MOISTURE",
+                "severity": "WARNING"
+            }
+        },
+        {
+            "type": "org.thingsboard.rule.engine.rpc.TbSendRPCRequestNode",
+            "name": "Trigger Irrigation",
+            "configuration": {
+                "method": "startIrrigation",
+                "params": {
+                    "duration_minutes": 15
+                }
+            }
+        }
+    ],
+    "connections": [
+        {
+            "fromIndex": 0,
+            "toIndex": 1,
+            "type": "Post telemetry"
+        },
+        {
+            "fromIndex": 1,
+            "toIndex": 2,
+            "type": "True"
+        },
+        {
+            "fromIndex": 2,
+            "toIndex": 3,
+            "type": "Created"
+        }
+    ]
+}

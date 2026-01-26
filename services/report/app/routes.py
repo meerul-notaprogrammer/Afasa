@@ -48,7 +48,7 @@ async def generate_report(
     body: ReportRequest,
     token: TokenPayload = Depends(verify_token)
 ):
-    """Generate a new report"""
+    """Queue a new report for generation"""
     now = datetime.now(timezone.utc)
     
     # Calculate date range based on type
@@ -69,122 +69,40 @@ async def generate_report(
     else:
         raise HTTPException(status_code=400, detail="Invalid report type")
     
-    storage = get_storage_client()
-    
     async with get_tenant_session(token.tenant_id) as session:
-        # Get tenant name
-        tenant_result = await session.execute(
-            select(Tenant).where(Tenant.id == UUID(token.tenant_id))
-        )
-        tenant = tenant_result.scalar_one_or_none()
-        tenant_name = tenant.name if tenant else "Unknown"
-        
-        # Create report record
+        # Create report record with queued status
         report = Report(
             tenant_id=UUID(token.tenant_id),
             format=body.format,
             range_from=range_from,
             range_to=range_to,
-            status="processing"
+            status="queued"
         )
         session.add(report)
         await session.flush()
+        await session.refresh(report)
         
-        # Gather data
-        det_result = await session.execute(
-            select(Detection).where(
-                Detection.created_at >= range_from,
-                Detection.created_at <= range_to
-            )
-        )
-        detections = [
-            {
-                "id": str(d.id),
-                "camera_id": str(d.camera_id),
-                "label": d.label,
-                "confidence": d.confidence,
-                "created_at": d.created_at.isoformat()
-            }
-            for d in det_result.scalars().all()
-        ]
-        
-        ass_result = await session.execute(
-            select(Assessment).where(
-                Assessment.created_at >= range_from,
-                Assessment.created_at <= range_to
-            )
-        )
-        assessments = [
-            {
-                "id": str(a.id),
-                "camera_id": str(a.camera_id),
-                "severity": a.severity,
-                "hypotheses": a.hypotheses,
-                "created_at": a.created_at.isoformat()
-            }
-            for a in ass_result.scalars().all()
-        ]
-        
-        task_result = await session.execute(select(Task))
-        tasks = [
-            {
-                "id": str(t.id),
-                "title": t.title,
-                "priority": t.priority,
-                "status": t.status,
-                "due_at": t.due_at.isoformat() if t.due_at else None
-            }
-            for t in task_result.scalars().all()
-        ]
-        
-        # Summary stats
-        snapshot_count = await session.scalar(
-            select(func.count(Snapshot.id)).where(
-                Snapshot.taken_at >= range_from,
-                Snapshot.taken_at <= range_to
-            )
-        )
-        
-        summary = {
-            "total_snapshots": snapshot_count or 0,
-            "total_detections": len(detections),
-            "total_assessments": len(assessments),
-            "open_tasks": len([t for t in tasks if t["status"] == "open"]),
-            "completed_tasks": len([t for t in tasks if t["status"] == "done"])
-        }
-        
-        # Generate report
-        if body.format == "pdf":
-            data = generate_pdf_report(
-                tenant_name, range_from, range_to,
-                summary, detections, assessments, tasks
-            )
-        else:
-            data = generate_xlsx_report(
-                tenant_name, range_from, range_to,
-                detections, assessments, tasks
-            )
-        
-        # Upload to S3
-        s3_key = storage.upload_report(token.tenant_id, str(report.id), data, body.format)
-        
-        report.s3_key = s3_key
-        report.status = "ready"
-        await session.flush()
-        
-        # Publish event
+        # Publish event for async processing
         event_bus = await get_event_bus()
         await event_bus.publish(
-            Subjects.REPORT_READY,
+            Subjects.REPORT_REQUESTED,
             token.tenant_id,
             {
                 "report_id": str(report.id),
-                "s3_key": s3_key
+                "format": body.format,
+                "range_from": range_from.isoformat(),
+                "range_to": range_to.isoformat()
             },
             producer="afasa-report"
         )
         
-        return report
+        await session.commit()
+        
+        return ReportResponse(
+            report_id=report.id,
+            s3_key=None,
+            status="queued"
+        )
 
 
 @router.get("/reports/{report_id}", response_model=ReportDownload)

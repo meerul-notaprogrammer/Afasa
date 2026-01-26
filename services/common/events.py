@@ -121,3 +121,6 @@ class Subjects:
     REPORT_REQUESTED = "afasa.report.requested"
     REPORT_READY = "afasa.report.ready"
     TELEGRAM_OUTBOUND = "afasa.notify.telegram.outbound"
+    DEVICE_SYNCED = "afasa.tb.device.synced"
+    DEVICE_COMMAND_REQUESTED = "afasa.tb.device.command.requested"
+    DEVICE_COMMAND_COMPLETED = "afasa.tb.device.command.completed"

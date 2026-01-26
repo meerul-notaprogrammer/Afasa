@@ -1,0 +1,113 @@
+http:
+  routers:
+    # API Routes
+    media-router:
+      rule: "PathPrefix(`/api/media`)"
+      service: media-service
+      entryPoints:
+        - web
+    
+    yolo-router:
+      rule: "PathPrefix(`/api/vision/yolo`)"
+      service: yolo-service
+      entryPoints:
+        - web
+    
+    reasoner-router:
+      rule: "PathPrefix(`/api/vision/reasoner`)"
+      service: reasoner-service
+      entryPoints:
+        - web
+    
+    ops-router:
+      rule: "PathPrefix(`/api/ops`)"
+      service: ops-service
+      entryPoints:
+        - web
+    
+    telegram-router:
+      rule: "PathPrefix(`/api/telegram`)"
+      service: telegram-service
+      entryPoints:
+        - web
+    
+    report-router:
+      rule: "PathPrefix(`/api/report`)"
+      service: report-service
+      entryPoints:
+        - web
+    
+    tb-router:
+      rule: "PathPrefix(`/api/tb`)"
+      service: tb-service
+      entryPoints:
+        - web
+    
+    portal-router:
+      rule: "PathPrefix(`/portal`)"
+      service: portal-service
+      entryPoints:
+        - web
+    
+    keycloak-router:
+      rule: "PathPrefix(`/realms`) || PathPrefix(`/auth`) || PathPrefix(`/admin`) || PathPrefix(`/js`) || PathPrefix(`/resources`)"
+      service: keycloak-service
+      entryPoints:
+        - web
+    
+    stream-router:
+      rule: "PathPrefix(`/stream`)"
+      service: mediamtx-service
+      entryPoints:
+        - web
+
+  services:
+    media-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-afasa-media-1:8000"
+    
+    yolo-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-afasa-vision-yolo-1:8000"
+    
+    reasoner-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-afasa-vision-reasoner-1:8000"
+    
+    ops-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-afasa-ops-1:8000"
+    
+    telegram-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-afasa-telegram-1:8000"
+    
+    report-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-afasa-report-1:8000"
+    
+    tb-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-afasa-tb-adapter-1:8000"
+    
+    portal-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-afasa-portal-1:5173"
+    
+    keycloak-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-keycloak-1:8080"
+    
+    mediamtx-service:
+      loadBalancer:
+        servers:
+          - url: "http://afasa2-mediamtx-1:8888"

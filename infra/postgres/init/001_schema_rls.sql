@@ -47,6 +47,25 @@ CREATE TABLE IF NOT EXISTS cameras (
 );
 CREATE INDEX IF NOT EXISTS cameras_tenant_idx ON cameras(tenant_id);
 
+-- Devices (IoT devices from UbiBot, etc.)
+CREATE TABLE IF NOT EXISTS devices (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  provider text NOT NULL,              -- ubibot, thingsboard, etc.
+  external_id text NOT NULL,           -- provider's device ID
+  name text NOT NULL,
+  device_type text,                    -- sensor, actuator, etc.
+  location text,
+  enabled boolean NOT NULL DEFAULT true,
+  last_seen timestamptz,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, provider, external_id)
+);
+CREATE INDEX IF NOT EXISTS devices_tenant_idx ON devices(tenant_id);
+CREATE INDEX IF NOT EXISTS devices_provider_idx ON devices(provider);
+
 -- Snapshots
 CREATE TABLE IF NOT EXISTS snapshots (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -176,6 +195,7 @@ CREATE INDEX IF NOT EXISTS audit_tenant_time_idx ON audit_log(tenant_id, occurre
 -- Convention: API sets "SET app.tenant_id = '<uuid>'" per request, per connection.
 
 ALTER TABLE cameras ENABLE ROW LEVEL SECURITY;
+ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE detections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE assessments ENABLE ROW LEVEL SECURITY;
@@ -190,6 +210,9 @@ ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 
 -- Helper: protect against missing tenant id
 CREATE POLICY tenant_isolation_cameras ON cameras
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+
+CREATE POLICY tenant_isolation_devices ON devices
   USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
 CREATE POLICY tenant_isolation_snapshots ON snapshots

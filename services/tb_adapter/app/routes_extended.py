@@ -200,8 +200,52 @@ async def enable_device(
     token: TokenPayload = Depends(require_role("tenant_admin"))
 ):
     """Enable a device"""
-    # In real implementation, would update device status
-    return {"success": True}
+    from common import Device, get_event_bus, Subjects
+    
+    audit = get_audit_service()
+    
+    async with get_tenant_session(token.tenant_id) as session:
+        result = await session.execute(
+            select(Device).where(Device.id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+        
+        # Update state
+        old_state = device.enabled
+        device.enabled = True
+        device.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        
+        # Publish command event
+        event_bus = await get_event_bus()
+        await event_bus.publish(
+            Subjects.DEVICE_COMMAND_REQUESTED,
+            token.tenant_id,
+            {
+                "device_id": str(device_id),
+                "command": "enable",
+                "provider": device.provider,
+                "external_id": device.external_id
+            },
+            producer="afasa-tb-adapter"
+        )
+        
+        # Audit log
+        await audit.log(
+            tenant_id=token.tenant_id,
+            actor_type="user",
+            actor_id=token.sub,
+            action="device.enabled",
+            target_type="device",
+            target_id=str(device_id),
+            before={"enabled": old_state},
+            after={"enabled": True}
+        )
+    
+    return {"success": True, "device_id": str(device_id), "enabled": True}
 
 
 @router.post("/devices/{device_id}/disable", tags=["devices"])
@@ -210,7 +254,52 @@ async def disable_device(
     token: TokenPayload = Depends(require_role("tenant_admin"))
 ):
     """Disable a device"""
-    return {"success": True}
+    from common import Device, get_event_bus, Subjects
+    
+    audit = get_audit_service()
+    
+    async with get_tenant_session(token.tenant_id) as session:
+        result = await session.execute(
+            select(Device).where(Device.id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+        
+        # Update state
+        old_state = device.enabled
+        device.enabled = False
+        device.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        
+        # Publish command event
+        event_bus = await get_event_bus()
+        await event_bus.publish(
+            Subjects.DEVICE_COMMAND_REQUESTED,
+            token.tenant_id,
+            {
+                "device_id": str(device_id),
+                "command": "disable",
+                "provider": device.provider,
+                "external_id": device.external_id
+            },
+            producer="afasa-tb-adapter"
+        )
+        
+        # Audit log
+        await audit.log(
+            tenant_id=token.tenant_id,
+            actor_type="user",
+            actor_id=token.sub,
+            action="device.disabled",
+            target_type="device",
+            target_id=str(device_id),
+            before={"enabled": old_state},
+            after={"enabled": False}
+        )
+    
+    return {"success": True, "device_id": str(device_id), "enabled": False}
 
 
 # ============================================================================
@@ -267,7 +356,11 @@ async def connect_ubibot(
 @router.post("/discovery/ubibot/sync", tags=["integrations"])
 async def sync_ubibot(token: TokenPayload = Depends(require_role("tenant_admin"))):
     """Sync UbiBot devices to device registry"""
+    from common import Device, get_event_bus, Subjects
+    from sqlalchemy.dialects.postgresql import insert
+    
     secrets = get_secrets_manager()
+    audit = get_audit_service()
     
     async with get_tenant_session(token.tenant_id) as session:
         # Get API key from secrets
@@ -281,16 +374,86 @@ async def sync_ubibot(token: TokenPayload = Depends(require_role("tenant_admin")
         
         api_key = secrets.decrypt(secret.cipher_text)
         
-        # Fetch and sync channels
+        # Fetch channels from UbiBot
         channels = await get_ubibot_channels(api_key)
         
         created = 0
-        for channel in channels:
-            # Create device entry (simplified)
-            # In real implementation, would check for existing and update
-            created += 1
+        updated = 0
         
-        return {"devices_found": len(channels), "devices_created": created}
+        for channel in channels:
+            # Prepare device data
+            device_data = {
+                "tenant_id": UUID(token.tenant_id),
+                "provider": "ubibot",
+                "external_id": str(channel.get("channel_id")),
+                "name": channel.get("name", f"UbiBot {channel.get('channel_id')}"),
+                "device_type": channel.get("product_id", "sensor"),
+                "location": channel.get("location"),
+                "enabled": True,
+                "last_seen": datetime.now(timezone.utc),
+                "metadata": {
+                    "product_id": channel.get("product_id"),
+                    "firmware": channel.get("firmware"),
+                    "fields": channel.get("fields", [])
+                },
+                "updated_at": datetime.now(timezone.utc)
+            }
+            
+            # Idempotent UPSERT
+            stmt = insert(Device).values(**device_data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["tenant_id", "provider", "external_id"],
+                set_={
+                    "name": stmt.excluded.name,
+                    "device_type": stmt.excluded.device_type,
+                    "location": stmt.excluded.location,
+                    "last_seen": stmt.excluded.last_seen,
+                    "metadata": stmt.excluded.metadata,
+                    "updated_at": stmt.excluded.updated_at
+                }
+            ).returning(Device.id)
+            
+            result = await session.execute(stmt)
+            device_id = result.scalar_one()
+            
+            # Check if it was created or updated
+            if result.rowcount == 1:
+                created += 1
+            else:
+                updated += 1
+        
+        await session.commit()
+        
+        # Publish sync event
+        event_bus = await get_event_bus()
+        await event_bus.publish(
+            Subjects.DEVICE_SYNCED,
+            token.tenant_id,
+            {
+                "provider": "ubibot",
+                "devices_found": len(channels),
+                "devices_created": created,
+                "devices_updated": updated
+            },
+            producer="afasa-tb-adapter"
+        )
+        
+        # Audit log
+        await audit.log(
+            tenant_id=token.tenant_id,
+            actor_type="user",
+            actor_id=token.sub,
+            action="devices.synced",
+            target_type="integration",
+            target_id="ubibot",
+            after={"count": len(channels), "created": created, "updated": updated}
+        )
+        
+        return {
+            "devices_found": len(channels),
+            "devices_created": created,
+            "devices_updated": updated
+        }
 
 
 @router.post("/integrations/thingsboard/connect", tags=["integrations"])

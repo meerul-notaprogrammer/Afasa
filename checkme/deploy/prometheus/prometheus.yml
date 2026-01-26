@@ -1,0 +1,66 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers: []
+
+rule_files: []
+
+scrape_configs:
+  # Self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # AFASA Services
+  - job_name: "afasa-services"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "afasa-media:8000"
+          - "afasa-vision-yolo:8000"
+          - "afasa-vision-reasoner:8000"
+          - "afasa-ops:8000"
+          - "afasa-telegram:8000"
+          - "afasa-report:8000"
+          - "afasa-tb-adapter:8000"
+        labels:
+          group: "afasa"
+
+  # Infrastructure
+  - job_name: "infrastructure"
+    static_configs:
+      - targets:
+          - "postgres:5432"
+        labels:
+          group: "database"
+      - targets:
+          - "redis:6379"
+        labels:
+          group: "cache"
+      - targets:
+          - "nats:8222"
+        labels:
+          group: "messaging"
+      - targets:
+          - "minio:9000"
+        labels:
+          group: "storage"
+
+  # Traefik
+  - job_name: "traefik"
+    static_configs:
+      - targets:
+          - "traefik:8082"
+        labels:
+          group: "routing"
+
+  # Keycloak
+  - job_name: "keycloak"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "keycloak:8080"
+        labels:
+          group: "identity"

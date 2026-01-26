@@ -1,0 +1,55 @@
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Node (for portal)
+node_modules/
+.npm/
+services/portal/dist/
+
+# Database
+*.db
+*.sqlite
+
+# MinIO data (if running locally)
+minio_data/
+
+# Postgres data
+pgdata/
+
+# Archived files
+archive/
+
+# Reports (generated)
+report/*.pdf
+report/*.csv

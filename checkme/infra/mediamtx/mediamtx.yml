@@ -1,0 +1,31 @@
+# MediaMTX Configuration for AFASA
+# Converts RTSP streams to HLS for web viewing
+
+logLevel: info
+logDestinations: [stdout]
+
+# API for control
+api: yes
+apiAddress: :9997
+
+# RTSP settings
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]
+
+# HLS output for web viewing
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: yes
+hlsSegmentCount: 3
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+
+# WebRTC (future)
+webrtc: no
+
+# Paths configuration
+paths:
+  # Fallback for any camera
+  all:
+    source: publisher

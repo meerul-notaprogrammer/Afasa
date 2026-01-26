@@ -20,15 +20,13 @@ services:
   # EDGE ROUTING (Traefik)
   # ===========================================================================
   traefik:
-    image: traefik:latest
-    environment:
-      - DOCKER_API_VERSION=1.45 # Forcing newer API version
+    image: traefik:v3.6.7
     command:
       - "--api.dashboard=true"
       - "--api.insecure=true"
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
-      - "--providers.docker.network=afasa2_afasa_net"
+      - "--providers.docker.network=afasa20_afasa_net"
       - "--entrypoints.web.address=:80"
       - "--metrics.prometheus=true"
       - "--metrics.prometheus.addEntryPointsLabels=true"
