@@ -16,7 +16,7 @@ from common import (
     Camera, Secret, get_secrets_manager, get_audit_service
 )
 from app.tb_api import get_tb_client
-from app.ubibot import get_ubibot_channels
+from app.ubibot import get_ubibot_channels, import_ubibot_to_tb
 
 router = APIRouter()
 
@@ -199,9 +199,20 @@ async def enable_device(
     device_id: UUID,
     token: TokenPayload = Depends(require_role("tenant_admin"))
 ):
-    """Enable a device"""
-    # In real implementation, would update device status
-    return {"success": True}
+    """Enable a device (e.g. enable ONVIF monitoring)"""
+    async with get_tenant_session(token.tenant_id) as session:
+        result = await session.execute(
+            select(Camera).where(Camera.id == device_id)
+        )
+        camera = result.scalar_one_or_none()
+
+        if not camera:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+        camera.onvif_enabled = True
+        await session.flush()
+
+    return {"success": True, "status": "enabled"}
 
 
 @router.post("/devices/{device_id}/disable", tags=["devices"])
@@ -210,7 +221,19 @@ async def disable_device(
     token: TokenPayload = Depends(require_role("tenant_admin"))
 ):
     """Disable a device"""
-    return {"success": True}
+    async with get_tenant_session(token.tenant_id) as session:
+        result = await session.execute(
+            select(Camera).where(Camera.id == device_id)
+        )
+        camera = result.scalar_one_or_none()
+
+        if not camera:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+        camera.onvif_enabled = False
+        await session.flush()
+
+    return {"success": True, "status": "disabled"}
 
 
 # ============================================================================
@@ -266,8 +289,9 @@ async def connect_ubibot(
 
 @router.post("/discovery/ubibot/sync", tags=["integrations"])
 async def sync_ubibot(token: TokenPayload = Depends(require_role("tenant_admin"))):
-    """Sync UbiBot devices to device registry"""
+    """Sync UbiBot devices to device registry (ThingsBoard)"""
     secrets = get_secrets_manager()
+    tb = get_tb_client()
     
     async with get_tenant_session(token.tenant_id) as session:
         # Get API key from secrets
@@ -281,16 +305,17 @@ async def sync_ubibot(token: TokenPayload = Depends(require_role("tenant_admin")
         
         api_key = secrets.decrypt(secret.cipher_text)
         
-        # Fetch and sync channels
-        channels = await get_ubibot_channels(api_key)
+        # Import to ThingsBoard
+        try:
+            imported_devices = await import_ubibot_to_tb(api_key, tb)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
         
-        created = 0
-        for channel in channels:
-            # Create device entry (simplified)
-            # In real implementation, would check for existing and update
-            created += 1
-        
-        return {"devices_found": len(channels), "devices_created": created}
+        return {
+            "devices_found": len(imported_devices),
+            "devices_created": len(imported_devices),
+            "details": imported_devices
+        }
 
 
 @router.post("/integrations/thingsboard/connect", tags=["integrations"])
