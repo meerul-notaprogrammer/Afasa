@@ -1,0 +1,52 @@
+{
+    "name": "Disease Alert",
+    "firstNodeIndex": 0,
+    "nodes": [
+        {
+            "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode",
+            "name": "Message Type Switch",
+            "configuration": {}
+        },
+        {
+            "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
+            "name": "Disease Detection Filter",
+            "configuration": {
+                "jsScript": "return msg.detection_type === 'disease' && msg.confidence > 0.7;"
+            }
+        },
+        {
+            "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
+            "name": "Create Disease Alarm",
+            "configuration": {
+                "alarmType": "PLANT_DISEASE_DETECTED",
+                "severity": "MAJOR"
+            }
+        },
+        {
+            "type": "org.thingsboard.rule.engine.mail.TbSendEmailNode",
+            "name": "Send Email Notification",
+            "configuration": {
+                "useSystemSmtpSettings": true,
+                "subject": "AFASA Alert: Plant Disease Detected",
+                "body": "A plant disease has been detected with ${confidence}% confidence."
+            }
+        }
+    ],
+    "connections": [
+        {
+            "fromIndex": 0,
+            "toIndex": 1,
+            "type": "Post telemetry"
+        },
+        {
+            "fromIndex": 1,
+            "toIndex": 2,
+            "type": "True"
+        },
+        {
+            "fromIndex": 2,
+            "toIndex": 3,
+            "type": "Created"
+        }
+    ]
+}
