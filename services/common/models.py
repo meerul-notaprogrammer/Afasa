@@ -72,7 +72,7 @@ class Device(Base):
     location: Mapped[Optional[str]] = mapped_column(String(255))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    device_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
